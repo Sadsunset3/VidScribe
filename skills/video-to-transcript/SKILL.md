@@ -1,11 +1,11 @@
 ---
 name: video-to-transcript
-description: Use when downloading or transcribing a video, podcast, course, or audio source; turning spoken content into a publishable Markdown blog or review article; calling DashScope Paraformer; or safely handling temporary transcription media.
+description: Use when downloading or transcribing a video, podcast, course, or audio source; turning spoken content into a Chinese Markdown summary; calling DashScope Paraformer; translating English speech for a Chinese deliverable; or safely handling temporary transcription media.
 ---
 
-# 视频转录与博客重构
+# 视频转录与中文总结
 
-使用随附 CLI 完成确定性的媒体处理，再把口语化转录重构为可公开发布、便于复习的 Markdown 博客。安装依赖、配置凭据或诊断转录故障时，完整阅读 [references/configuration.md](references/configuration.md)。
+使用随附 CLI 完成确定性的媒体处理，再把口语化转录重构为便于阅读和复习的中文 Markdown 总结。安装依赖、配置凭据或诊断转录故障时，完整阅读 [references/configuration.md](references/configuration.md)。
 
 ## 前置条件
 
@@ -15,7 +15,7 @@ description: Use when downloading or transcribing a video, podcast, course, or a
 
 ## 在私有暂存目录中转录
 
-在用户指定的最终输出目录内创建一个仅属于本次运行的 `.video-to-blog-stage-<随机值>` 目录，解析并确认它位于该输出目录内，然后运行：
+在用户指定的最终输出目录内创建一个仅属于本次运行的 `.video-to-summary-stage-<随机值>` 目录，解析并确认它位于该输出目录内，然后运行：
 
 ```bash
 python scripts/video_to_transcript.py "<URL-or-local-path>" --output-dir "<private-stage-directory>"
@@ -23,39 +23,58 @@ python scripts/video_to_transcript.py "<URL-or-local-path>" --output-dir "<priva
 
 URL 使用 `bestaudio/worst` 下载单个条目；本地视频只检查和提取音频，原始本地媒体永不删除。除非用户明确要求，不使用 `--keep-media`；只有需要紧凑的 16 kHz 单声道 MP3 时才使用 `--normalize-audio`。
 
-从规范化 JSON 读取不含时间戳的 `text` 和 `metadata.duration_seconds`。标题来源优先级为：用户提供的名称与集数、可用媒体元数据、本地文件名、清理后的来源名；不得虚构标题或集数。
+从规范化 JSON 读取不含时间戳的 `text` 和 `metadata.duration_seconds`。媒体元数据和本地文件名只用于识别来源，不直接决定最终文件名；随机 ID、哈希、下载 stem 和 `source-*` 名称不得成为最终文件名。
 
-## 重构博客
+## 重构总结
 
-完整阅读 [references/blog-reconstruction-workflow.md](references/blog-reconstruction-workflow.md)，默认使用其中的 `economy` 模式：
+完整阅读 [references/summary-reconstruction-workflow.md](references/summary-reconstruction-workflow.md)，默认使用其中的 `economy` 模式：
 
 1. 按时长与 Token 预算的较大分片数切分。
 2. 每片单次通读，同时生成一句话知识锚点和最小证据胶囊。
 3. 只合并压缩材料；仅对标记节点定向回查原文，不做第二次全文读取。
-4. 以锚点编号检查覆盖后移除编号，完成博客文风与 Markdown 检查。
-5. 先写同目录临时文件，通过门禁后原子发布为 `*.blog.md`。
+4. 主要为英文或其他非中文语言时，在锚点仍保留时执行忠实的中文翻译与润色；再次逐项检查覆盖后才移除锚点编号。
+5. 根据完整内容生成简洁、准确的中文标题，以该标题命名文件；草稿和登记发布候选留在私有暂存目录，通过门禁后再以原子 `no-clobber` 方式发布为 `中文标题.summary.md`。
 
 用户明确要求最高保真，或内容属于高风险且细节无法由定向回查确认时，才使用 `maximum-fidelity` 模式。
 
 ## 发布与清理门禁
 
-最终文章首行必须是 `# 《名称》`；系列内容使用 `# 《名称 第X集/期》`。已有同名文件时依次选择 `-2`、`-3`，不得覆盖。
+最终文档首行必须是 `# 《中文标题》`。标题应概括实际主题，不得使用来源 ID、随机文件名或空泛的“播客总结”；系列名称和集数只有在来源能够确认时才可纳入标题。
+
+先把内容标题清理为唯一的“语义标题”：移除 Windows 和 POSIX 文件系统不允许的字符，压缩多余空白，并去除结尾空格和句点；如果清理后为空或属于 Windows 保留设备名，必须根据内容重新拟题。这个清理后的同一值同时用于首行 `# 《语义标题》` 和文件名 `语义标题.summary.md`。
+
+分别登记语义标题和本次追加的避碰序号；已有同名文件时依次选择 `语义标题-2.summary.md`、`语义标题-3.summary.md`，不得覆盖。`-2`、`-3` 只用于文件避碰，不属于语义标题；一致性检查使用登记值，不通过正则猜测标题末尾的数字是否为避碰后缀。
+
+## 持久化运行清单
+
+私有暂存目录创建后立即以原子写入方式创建 `.run-manifest.json`，并在每次最终目录写入、发布和清理操作之前先原子更新。清单至少登记：schema 版本、随机运行 ID、解析后的输出目录与暂存目录、CLI 返回的三条精确输出路径、每个运行创建中间文件的精确路径、清理后的语义标题、避碰序号、目标总结路径、暂存目录内发布候选文件的精确路径、候选文件的稳定文件实体身份（POSIX 的设备号与 inode，或 Windows 的卷与 file ID）、最终正文哈希和当前状态。
+
+状态只允许按 `staging -> draft-validated -> publish-prepared -> published -> cleanup-pending -> complete` 前进。进入 `draft-validated` 时先登记尚未创建的发布候选精确路径、目标路径和正文哈希；候选必须位于私有暂存目录并以 exclusive-create 创建。候选写入、落盘并取得实体身份后才进入 `publish-prepared`。发布后、删除任何中间产物前必须写入 `published` 或 `cleanup-pending`。清理时最后删除清单和空暂存目录。
+
+恢复时只信任清单中的精确路径，并重新验证运行 ID、创建归属、目录归属、文件实体身份和正文哈希。目标只有在其稳定文件身份与发布前登记的临时文件身份相同时，才能视为由本次运行发布；哈希只验证内容完整性，不能证明创建归属。目标实体不同，即使正文哈希相同也视为名称碰撞，登记下一个避碰序号。清单缺失、损坏、文件系统无法提供可靠实体身份，或归属验证失败时停止自动发布与清理并报告，不能猜测路径或使用文件名模式恢复。
 
 只有同时满足以下条件，才算发布成功：
 
-- 最终文件非空，首行标题合规；
+- 最终文件非空，首行使用登记的清理后语义标题，文件名由该标题和登记的避碰序号构成；
+- 正文为自然中文；主要为英文或其他非中文语言时，已完成翻译与润色检查，且事实、限定条件、专有名词、代码、数字和引用含义没有改变；
 - 所有知识锚点恰好完成覆盖，内部编号、时间戳、日志和处理说明均已移除；
 - 最终文件位于用户指定的输出目录，暂存目录仍解析在该目录内；
 - 待清理文件均由本次运行创建且位于本次私有暂存目录内。
 
-成功发布后，删除本次暂存目录中的转录 Markdown、规范化 JSON、ASR 原始响应、草稿及其他中间产物，再删除空暂存目录。不得用通配符、未解析变量或宽泛路径执行清理。最终 `*.blog.md` 是唯一交付物，回复中直接给出文章正文，不附开场白、路径清单、执行过程或质检报告。
+草稿、锚点、翻译稿和发布候选始终写入私有暂存目录。全部内容门禁通过后，先把 `draft-validated` 状态、尚未创建的候选精确路径、目标路径和正文哈希原子写入运行清单；再以 exclusive-create 在暂存目录创建候选，写入、落盘并读取稳定文件实体身份，最后把身份和 `publish-prepared` 状态原子写入清单。候选创建前崩溃时没有新文件；创建后崩溃时文件仍位于清单已登记且归属明确的私有暂存目录。
 
-如果转录、重构、验证或发布失败，不执行成功清理；保留私有暂存目录供重试，并简洁报告失败阶段和目录。失败恢复材料不属于成功交付物。
+暂存目录是最终输出目录的子目录，因此候选与目标必须位于同一文件系统。发布使用保留候选文件实体身份且目标存在即失败的原子 `no-clobber` 操作，例如硬链接发布，或提供等价 fail-if-exists 与身份保持保证的原语。硬链接方案在 `published` 状态持久化前保留暂存候选链接，以便崩溃恢复用同一文件实体证明归属；候选随后作为登记的暂存中间产物清理。不能使用允许覆盖目标的 `replace` 语义；如果选名后发生并发占用，无论对方内容是否相同，都保留同一语义标题、登记下一个避碰序号并重试。文件系统无法满足身份保持和 `no-clobber` 时停止发布并报告。
+
+成功发布并将清单更新为 `cleanup-pending` 后，逐一删除清单登记的 CLI 三条精确输出路径（转录 Markdown、规范化 JSON、ASR 原始响应），再删除登记的草稿、翻译稿及其他中间产物，最后把状态写为 `complete`，删除运行清单和空暂存目录。每个实际目标都必须先解析并验证为本次运行创建且位于本次私有暂存目录内；不得用通配符、未解析变量或宽泛路径执行删除。最终 `语义标题.summary.md` 是本次运行唯一新增的交付物，既有文件不删除，回复中直接给出总结正文，不附开场白、路径清单、执行过程或质检报告。
+
+如果转录、重构、验证或发布失败，不执行成功清理；发布候选和其他恢复材料保留在私有暂存目录供重试，并简洁报告失败阶段和目录。不得删除既有文件或目标总结。失败恢复材料不属于成功交付物。
+
+如果最终总结已经发布但暂存清理失败，将任务标记为“发布成功、清理未完成”，不得声称完整成功，也不得回滚、覆盖或删除已发布总结。报告尚存的本次运行精确路径；重试清理时仍逐项执行相同的创建归属和私有暂存目录归属校验。只有残留中间产物和空暂存目录全部清除后，才报告唯一文档交付完成。
 
 ## 禁止事项
 
 - 不分别请求视频流和音频流，不使用 `worstaudio`，不处理播放列表。
-- 不向最终文章加入时间戳、知识清单、锚点编号或处理日志。
-- 不为补齐文章虚构观点、经历、数据、代码、案例或引用。
-- 不把博客写成任务汇报、会议总结、公文纪要或逐句转录。
+- 不向最终总结加入时间戳、知识清单、锚点编号或处理日志。
+- 不为补齐总结或翻译虚构观点、经历、数据、代码、案例或引用。
+- 不把总结写成任务汇报、公文纪要或逐句转录。
 - 未使用真实来源和凭据完成云端调用时，不声称已经验证实时转录。
