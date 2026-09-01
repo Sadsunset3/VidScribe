@@ -1,50 +1,368 @@
 # VidScribe
 
-VidScribe 将课程视频或本地音视频转换为无时间戳转录，并继续整理成面向读者的技术文档。
+VidScribe 是一个面向课程视频和技术音视频的可移植 Agent Skill。它将 URL 或本地媒体转换为无时间戳转录，并在转录成功后按可审计的长文本工作流整理技术文档。
 
-## 目录结构
+项目由两个边界明确的部分组成：
+
+- Python CLI 负责媒体探测、音频分离、上传、异步语音识别、结果持久化和安全清理。
+- Agent Skill 负责指导兼容的编程代理调用 CLI，并基于转录结果生成结构化技术文档。
+
+CLI 本身不会调用通用大模型改写内容。技术文档生成属于 Skill 编排阶段，因此直接执行 Python 脚本时只会得到三类转录工件。
+
+## 核心能力
+
+- 接受 yt-dlp 支持的单个视频 URL，以及本地音频或视频文件。
+- URL 下载优先选择最佳音频流，并以最低清晰度的合并格式作为回退，避免无意义的视频与音频合并。
+- 仅在视频需要分离音频或调用方要求音频标准化时使用 FFmpeg。
+- 使用阿里云百炼 DashScope `paraformer-v2` 异步语音识别接口。
+- 输出不包含时间戳的 Markdown 与标准化 JSON，同时保留服务商原始响应用于审计。
+- 每个输出文件通过临时文件加原子替换提交；正常单进程运行会为同名结果选择 `-2`、`-3` 等后缀。
+- 本地输入永不删除；只有本次运行创建且位于私有工作目录中的媒体才可能被清理。
+- 支持长转录的自然边界切块、事实卡提取、来源回查、跨块步骤恢复和去重合并。
+
+## 处理流程
+
+```text
+URL / local media
+        │
+        ▼
+dependency preflight ──► media probe
+        │
+        ├─ audio input ────────────────┐
+        └─ video input ─► FFmpeg audio │
+                         extraction    │
+                                       ▼
+                         DashScope temporary upload
+                                       │
+                                       ▼
+                         Paraformer async transcription
+                                       │
+                                       ▼
+                   sequential per-file atomic persistence
+                                       │
+                       validated success / failure gate
+                              │                  │
+                              ▼                  ▼
+                   safe media cleanup     retain work directory
+                              │
+                              ▼
+                    agent technical-document workflow
+                              │
+                              ▼
+                         *.technical.md
+```
+
+预检在创建工作目录之前执行。媒体处理开始后，如果下载、转换、上传、识别、解析或写入失败，工作目录会保留以便诊断和重试。
+
+## 适用范围
+
+当前实现适合个人开发、受控批处理和 Agent 辅助的技术资料整理，不应直接作为高并发生产转录服务部署。CLI 使用百炼临时上传接口；阿里云官方说明临时 URL 有效期为 48 小时，上传凭证接口按“主账号 + 模型”限制为 100 QPS，且该路径不适用于生产、高并发或压测场景。
+
+生产集成至少需要替换为自有 OSS 或其他稳定存储，并补充并发锁、幂等键、退避重试、任务回调、指标、告警和配额治理。相关限制参见[阿里云百炼临时文件文档](https://help.aliyun.com/zh/model-studio/get-temporary-file-url/)。
+
+## 系统要求
+
+- Python 3.10 或更高版本。
+- URL 输入需要 `yt-dlp` 命令，或者当前 Python 环境中的 `yt_dlp` 模块。
+- 媒体探测需要 `ffprobe`。
+- 视频音频分离和可选标准化需要 `ffmpeg`。
+- DashScope API Key，以及可访问对应百炼服务端点的网络环境。
+
+安装 yt-dlp：
+
+```bash
+python -m pip install --upgrade yt-dlp
+```
+
+CLI 会优先使用 `PATH` 中的 `yt-dlp`，找不到时自动回退到 `python -m yt_dlp`。
+
+macOS：
+
+```bash
+brew install ffmpeg
+```
+
+Ubuntu 或 Debian：
+
+```bash
+sudo apt-get update
+sudo apt-get install ffmpeg
+```
+
+Windows 推荐安装包含 `ffmpeg` 和 `ffprobe` 的轻量 Essentials 构建：
+
+```powershell
+winget install --id Gyan.FFmpeg.Essentials --exact
+```
+
+不需要克隆或编译 FFmpeg 源码，也不要用同名 Python 包代替 FFmpeg 可执行文件。
+
+验证依赖：
+
+```bash
+python --version
+python -m yt_dlp --version
+ffmpeg -version
+ffprobe -version
+```
+
+## 安装
+
+克隆仓库：
+
+```bash
+git clone https://github.com/Sadsunset3/VidScribe.git
+cd VidScribe
+```
+
+### 作为独立 CLI 使用
+
+无需安装 Python 包，直接从仓库根目录执行脚本：
+
+```bash
+python skills/video-to-transcript/scripts/video_to_transcript.py --help
+```
+
+### 作为 Agent Skill 使用
+
+将 `skills/video-to-transcript` 复制或链接到编程代理能够发现的 Skill 目录。Claude Code、OpenCode、ZCode、Codex 等运行时的全局目录和项目级目录可能不同，应以对应运行时的 Agent Skills 文档与本地配置为准。
+
+支持 `.agents/skills` 约定的运行时可以使用以下项目级路径：
+
+```text
+<project>/.agents/skills/video-to-transcript
+```
+
+开发环境推荐使用目录链接，使仓库中的修改立即反映到代理加载目录。Windows PowerShell 示例：
+
+```powershell
+New-Item -ItemType Directory -Force ".\.agents\skills" | Out-Null
+New-Item -ItemType Junction `
+  -Path ".\.agents\skills\video-to-transcript" `
+  -Target (Resolve-Path ".\skills\video-to-transcript")
+```
+
+目标路径已存在时命令会失败，从而避免静默覆盖已有 Skill。若运行时不读取 `.agents/skills`，请把链接目标调整为该运行时配置的 Skill 搜索目录。Skill 的核心行为定义在标准 `SKILL.md` 及相对路径资源中，不依赖某一个代理的专有工作区路径。
+
+## 配置 DashScope
+
+唯一必需的环境变量是 `DASHSCOPE_API_KEY`。
+
+Linux 或 macOS：
+
+```bash
+export DASHSCOPE_API_KEY="<your-key>"
+```
+
+Windows PowerShell：
+
+```powershell
+$env:DASHSCOPE_API_KEY = "<your-key>"
+```
+
+可选配置：
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `DASHSCOPE_MODEL` | `paraformer-v2` | 兼容当前 Paraformer 请求参数的模型名称 |
+| `DASHSCOPE_UPLOAD_URL` | `https://dashscope.aliyuncs.com/api/v1/uploads` | 临时 OSS 上传策略端点 |
+| `DASHSCOPE_ASR_URL` | `https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription` | 异步识别提交端点 |
+| `DASHSCOPE_TASK_URL_TEMPLATE` | `https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}` | 任务轮询端点，必须保留 `{task_id}` |
+| `DASHSCOPE_POLL_INTERVAL` | `5` | 轮询间隔，单位为秒 |
+| `DASHSCOPE_TIMEOUT` | `14400` | 最长等待时间，单位为秒 |
+
+提交参数固定包含中英文提示 `language_hints=["zh", "en"]`，并关闭时间戳对齐、保留语气词。`DASHSCOPE_MODEL` 仅用于兼容这些参数的 Paraformer 模型；只修改模型名称不能把该 CLI 迁移到请求结构不同的 ASR 模型。
+
+自定义端点、模型和 API Key 必须属于兼容的区域、工作空间与账号。密钥只从进程环境读取，不应写入仓库、命令输出或转录工件。
+
+## 快速开始
+
+以下命令均从仓库根目录执行。
+
+转录单个 URL：
+
+```bash
+python skills/video-to-transcript/scripts/video_to_transcript.py "<yt-dlp-supported-video-url>" --output-dir ./transcripts
+```
+
+尖括号内容是占位符，必须替换为调用方有权处理的真实媒体地址。URL 下载固定使用单项模式。选择器为 `bestaudio/worst`：优先最佳独立音频格式，没有独立音频格式时回退到最低清晰度的合并格式。
+
+转录本地视频：
+
+```bash
+python skills/video-to-transcript/scripts/video_to_transcript.py "/path/to/course.mp4" --output-dir ./transcripts
+```
+
+本地视频会在私有工作目录中分离为单声道、16 kHz、64 kbit/s MP3；原始视频保持不变。
+
+转录本地音频：
+
+```bash
+python skills/video-to-transcript/scripts/video_to_transcript.py "/path/to/course.mp3" --output-dir ./transcripts
+```
+
+通过 FFprobe 验证的本地音频默认直接上传，不进行无意义的重复编码。
+
+标准化本地音频：
+
+```bash
+python skills/video-to-transcript/scripts/video_to_transcript.py "/path/to/course.wav" --normalize-audio --output-dir ./transcripts
+```
+
+当源音频的编码或容器可能不被目标端点接受时，可以使用 `--normalize-audio` 转换为单声道 16 kHz MP3。重新编码会增加处理时间，并可能造成有损压缩。
+
+保留本次运行生成的媒体：
+
+```bash
+python skills/video-to-transcript/scripts/video_to_transcript.py "<URL-or-local-path>" --keep-media --output-dir ./transcripts
+```
+
+`--keep-media` 适用于调试或复用下载结果。使用该选项意味着需要由调用方自行管理磁盘空间和敏感媒体。
+
+## CLI 接口
+
+```text
+usage: video_to_transcript.py [-h] [--output-dir OUTPUT_DIR]
+                              [--keep-media] [--normalize-audio]
+                              source
+```
+
+| 参数 | 必需 | 说明 |
+| --- | --- | --- |
+| `source` | 是 | yt-dlp 支持的 URL 或本地媒体路径 |
+| `--output-dir` | 否 | 输出目录，默认 `transcripts` |
+| `--keep-media` | 否 | 成功后仍保留本次运行创建的媒体 |
+| `--normalize-audio` | 否 | 对本地纯音频也执行 16 kHz 单声道 MP3 标准化 |
+
+一次调用只处理一个输入，不会自动展开播放列表。
+
+## 输出契约
+
+CLI 成功后分别以单文件原子替换的方式写入三类文件：
+
+| 文件 | 内容 | 用途 |
+| --- | --- | --- |
+| `*.transcript.md` | 无时间戳的可读转录文本 | 阅读、编辑和后续整理 |
+| `*.transcript.json` | `text` 与模型、任务 ID、来源、时长等 `metadata` | 稳定的机器处理接口 |
+| `*.asr.raw.json` | 未修改的服务商响应 | 审计、排错和未来重新处理 |
+
+通过兼容编程代理执行 Skill 的文档整理阶段后，还会生成：
+
+| 文件 | 内容 | 用途 |
+| --- | --- | --- |
+| `*.technical.md` | 无时间戳的结构化技术文档 | 教程、知识库或工程文档 |
+
+正常单进程运行会为已有同名结果选择下一个可用后缀，例如 `lesson-2.transcript.md`。三个文件按顺序分别提交，不构成跨文件事务；写入中断时可能留下不完整的一组。多个进程也不应共享同一输出目录，因为当前命名检查没有文件锁，并发任务可能选择相同名称。
+
+## 技术文档整理
+
+短转录可以直接组织。较长转录会按自然边界切块，并在合并前生成带来源位置的事实卡。工作流遵守以下约束：
+
+1. 不切断句子、围栏代码块、命令或连续步骤。
+2. 每块记录问题、定义、组成关系、步骤依赖、代码、实例、限制、风险和不确定项。
+3. 合并时按主题去重，并保留无法消解的冲突。
+4. 重要结论能够回查到原始分块和段落。
+5. 最终文档按背景、定义、组成、过程、实例、限制和总结展开。
+
+完整规则参见 [`skills/video-to-transcript/references/technical-document-workflow.md`](skills/video-to-transcript/references/technical-document-workflow.md)。设计背景参见 [`docs/technical-document-workflow-design.md`](docs/technical-document-workflow-design.md)。
+
+不同代理的调用语法并不统一。安装后应通过自然语言明确指定 Skill、输入和输出目录，例如：
+
+```text
+使用 video-to-transcript skill 处理这个课程视频：<URL>。
+输出到 ./transcripts，转录不要时间戳，并继续整理成技术文档。
+```
+
+预期结果是三个 CLI 转录工件和一个 `*.technical.md`。若代理只返回前三个文件，说明 CLI 已完成但文档整理阶段尚未执行；可要求代理继续读取标准化 JSON，并按 Skill 中的技术文档工作流完成剩余步骤。
+
+## 安全模型
+
+清理操作必须同时满足以下条件：
+
+1. 三个 CLI 输出文件均已存在并通过验证。
+2. 标准化 JSON 中包含非空转录文本。
+3. 待删除媒体由当前运行创建。
+4. 待删除媒体解析后的路径位于当前私有工作目录中。
+
+因此，本地输入文件不会被删除，失败任务创建的媒体也不会在通用 `finally` 清理中消失。
+
+DashScope 临时 OSS 对象由服务商的临时存储生命周期管理。临时 URL 有效期为 48 小时，上传策略没有向本项目提供对象删除凭据，因此 CLI 只承诺清理本地运行工件。音频会离开本机并上传到云服务；调用方需要评估数据分类、所在地合规、服务条款和按量计费。
+
+标准化 JSON 会记录原始 `source` 值。不要把包含签名参数、访问令牌或其他凭据的 URL 直接作为输入；如无法避免，应在保存或共享结果前清理该字段。本地输入还可能暴露绝对路径，因此转录工件不应默认公开。
+
+公开仓库默认忽略 `.env`、媒体文件、转录结果、ASR 原始响应和私有工作目录。提交前仍应使用专门的密钥扫描工具检查暂存区和提交历史。
+
+## 限制
+
+- 单个待上传音频的大小上限为 1 GiB。
+- 三个 CLI 文件不是事务性工件组，并发任务不能安全地共享同一输出目录。
+- URL 能否下载取决于站点支持、访问权限、区域限制和 yt-dlp 兼容性。
+- 受 DRM 保护、需要额外授权或没有音轨的媒体不在支持范围内。
+- 音频质量、噪声、口音、专业术语和模型能力都会影响识别准确率。
+- 时间戳对齐被明确禁用；需要字幕定位或逐句时间轴的场景应使用其他工作流。
+- 长文本静态评估验证固定工件与合并不变量，不代表开放式模型生成质量。
+- 使用者必须拥有下载和处理源内容的权限，并遵守来源站点及云服务条款。
+
+## 故障处理
+
+| 错误或现象 | 检查方向 |
+| --- | --- |
+| `missing required programs` | 安装提示中的可执行文件，并检查 `PATH`；yt-dlp 也可通过当前 Python 模块提供 |
+| `media has no audio stream` | 确认源文件包含音轨，并检查站点是否暴露了独立或受保护的媒体流 |
+| `temporary upload policy response has no data` | 检查账号权限、API Key、区域和上传策略端点 |
+| `task succeeded but returned no transcription_url` | 检查服务商控制台中的任务；此失败发生在最终结果下载之前，因此不会生成本次运行的 `*.asr.raw.json` |
+| `transcription result is empty` | 检查音轨是否有效；空结果不会触发成功清理 |
+| 任务超时 | 调整 `DASHSCOPE_TIMEOUT`，检查网络和服务端任务状态 |
+
+失败信息会指出保留的 `.video-to-transcript-work-*` 目录。完成诊断或重试前不要删除该目录。
+
+## 开发与验证
+
+运行单元测试：
+
+```bash
+python -B -m unittest discover -s skills/video-to-transcript/tests -q
+```
+
+`-B` 禁止生成字节码缓存。测试覆盖命令构造、依赖回退、媒体探测、配置、DashScope 请求、持久化、非覆盖命名和删除门禁。
+
+运行长文本静态评估：
+
+```bash
+python -B -S skills/video-to-transcript/evals/long-transcript-static/run_evaluation.py --json
+```
+
+`-S` 避免第三方站点包影响评估环境。输出中的五项不变量分别验证切块与事实卡流程、跨块步骤、代码围栏、来源覆盖和合并去重。
+
+若运行时或 Agent Skills 工具链提供结构校验器，可以额外检查 `SKILL.md` frontmatter、资源路径和元数据。本仓库的测试与静态评估不依赖某个代理专有的校验命令。
+
+## 项目结构
 
 ```text
 VidScribe/
-├─ skills/
-│  └─ video-to-transcript/   # Git 管理的 Skill 源码
-├─ docs/
-│  ├─ technical-document-workflow-design.md
-│  └─ plans/
-│     └─ technical-document-workflow.md
-├─ transcripts/              # 本地生成结果，不提交到 Git
-├─ .agents/                  # 项目级 Agent/Skill 配置
-├─ .gitignore
-└─ README.md
+├─ skills/video-to-transcript/
+│  ├─ SKILL.md                  # Agent 工作流与安全约束
+│  ├─ agents/openai.yaml        # 可选的运行时适配元数据
+│  ├─ scripts/                  # 确定性转录 CLI
+│  ├─ references/               # 配置与技术文档规则
+│  ├─ tests/                    # 单元与契约测试
+│  └─ evals/                    # 长文本静态评估
+├─ docs/                        # 设计与实施记录
+└─ transcripts/                 # 默认本地输出；不进入版本控制
 ```
 
-`skills/video-to-transcript` 是唯一应当修改和提交的 Skill 源码目录。Codex 实际加载的目录通常是：
+## 贡献
 
-```text
-%USERPROFILE%\.codex\skills\video-to-transcript
-```
+提交变更前请完成以下检查：
 
-修改源码并通过测试后，再将源码同步到安装目录。不要反向把安装目录当作长期维护的主副本，否则容易出现项目源码与实际运行版本不一致的问题。
+1. 为行为变化添加或更新测试。
+2. 运行完整单元测试和长文本静态评估。
+3. 确认 Skill 源码与安装测试副本没有意外漂移。
+4. 检查暂存文件中不存在 API Key、媒体、转录或个人路径。
+5. 在变更说明中明确兼容性、失败行为和清理边界。
 
-## 验证 Skill
+涉及下载策略、删除逻辑、输出格式或环境变量的改动属于兼容性敏感变更，应同时更新 `SKILL.md`、参考文档与测试。
 
-在仓库根目录执行：
+## 许可证
 
-```powershell
-python -B -m unittest discover -s .\skills\video-to-transcript\tests -q
-```
-
-`-B` 禁止生成 Python 字节码缓存；`discover` 会查找并运行 Skill 的全部单元测试。成功时会显示测试数量和 `OK`。
-
-继续运行长文本静态评估：
-
-```powershell
-python -B -S .\skills\video-to-transcript\evals\long-transcript-static\run_evaluation.py --json
-```
-
-`-S` 隔离第三方站点包影响，`--json` 输出便于检查的结构化结果。该评估验证固定测试工件的切块、事实卡、代码块完整性、跨块步骤和事实去重，不代表开放式模型质量基准。
-
-## 本地输出
-
-转录、ASR 原始响应和技术文档默认保存在 `transcripts/`。这些文件可能体积较大，也可能包含课程内容，因此已被 `.gitignore` 排除，不会随公开仓库推送。
-
+仓库当前未包含开源许可证。公开可读不等于授予复制、修改、分发或商用许可；在许可证明确之前，默认保留全部权利。维护者若希望接受外部复用和贡献，应先选择并提交适合项目目标的许可证。
