@@ -11,6 +11,7 @@ venv/
 
 # Generated transcription outputs and temporary media
 transcripts/
+/video-to-transcript.zip
 .video-to-transcript-work-*/
 *.mp3
 *.m4a
@@ -30,4 +31,3 @@ transcripts/
 .vscode/
 .DS_Store
 Thumbs.db
-
