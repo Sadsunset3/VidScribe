@@ -127,6 +127,8 @@ python skills/video-to-transcript/scripts/video_to_transcript.py --help
 
 将 `skills/video-to-transcript` 复制或链接到编程代理能够发现的 Skill 目录。Claude Code、OpenCode、ZCode、Codex 等运行时的全局目录和项目级目录可能不同，应以对应运行时的 Agent Skills 文档与本地配置为准。
 
+该目录就是完整的通用 Skill，只包含跨代理运行所需的 `SKILL.md`、`scripts/` 和 `references/`。
+
 支持 `.agents/skills` 约定的运行时可以使用以下项目级路径：
 
 ```text
@@ -300,7 +302,6 @@ DashScope 临时 OSS 对象由服务商的临时存储生命周期管理。临�
 - 受 DRM 保护、需要额外授权或没有音轨的媒体不在支持范围内。
 - 音频质量、噪声、口音、专业术语和模型能力都会影响识别准确率。
 - 时间戳对齐被明确禁用；需要字幕定位或逐句时间轴的场景应使用其他工作流。
-- 长文本静态评估验证固定工件与合并不变量，不代表开放式模型生成质量。
 - 使用者必须拥有下载和处理源内容的权限，并遵守来源站点及云服务条款。
 
 ## 故障处理
@@ -316,52 +317,17 @@ DashScope 临时 OSS 对象由服务商的临时存储生命周期管理。临�
 
 失败信息会指出保留的 `.video-to-transcript-work-*` 目录。完成诊断或重试前不要删除该目录。
 
-## 开发与验证
-
-运行单元测试：
-
-```bash
-python -B -m unittest discover -s skills/video-to-transcript/tests -q
-```
-
-`-B` 禁止生成字节码缓存。测试覆盖命令构造、依赖回退、媒体探测、配置、DashScope 请求、持久化、非覆盖命名和删除门禁。
-
-运行长文本静态评估：
-
-```bash
-python -B -S skills/video-to-transcript/evals/long-transcript-static/run_evaluation.py --json
-```
-
-`-S` 避免第三方站点包影响评估环境。输出中的五项不变量分别验证切块与事实卡流程、跨块步骤、代码围栏、来源覆盖和合并去重。
-
-若运行时或 Agent Skills 工具链提供结构校验器，可以额外检查 `SKILL.md` frontmatter、资源路径和元数据。本仓库的测试与静态评估不依赖某个代理专有的校验命令。
-
 ## 项目结构
 
 ```text
 VidScribe/
 ├─ skills/video-to-transcript/
 │  ├─ SKILL.md                  # Agent 工作流与安全约束
-│  ├─ agents/openai.yaml        # 可选的运行时适配元数据
 │  ├─ scripts/                  # 确定性转录 CLI
-│  ├─ references/               # 配置与技术文档规则
-│  ├─ tests/                    # 单元与契约测试
-│  └─ evals/                    # 长文本静态评估
+│  └─ references/               # 配置与技术文档规则
 ├─ docs/                        # 设计与实施记录
 └─ transcripts/                 # 默认本地输出；不进入版本控制
 ```
-
-## 贡献
-
-提交变更前请完成以下检查：
-
-1. 为行为变化添加或更新测试。
-2. 运行完整单元测试和长文本静态评估。
-3. 确认 Skill 源码与安装测试副本没有意外漂移。
-4. 检查暂存文件中不存在 API Key、媒体、转录或个人路径。
-5. 在变更说明中明确兼容性、失败行为和清理边界。
-
-涉及下载策略、删除逻辑、输出格式或环境变量的改动属于兼容性敏感变更，应同时更新 `SKILL.md`、参考文档与测试。
 
 ## 许可证
 

@@ -1,7 +1,0 @@
-interface:
-  display_name: "Video to Technical Document"
-  short_description: "将课程音视频转写并整理为事实可靠、无时间戳的技术文档"
-  default_prompt: "Use $video-to-transcript to transcribe this media without timestamps, organize it into a fact-grounded technical document, and safely clean run-created media after success."
-
-policy:
-  allow_implicit_invocation: true
