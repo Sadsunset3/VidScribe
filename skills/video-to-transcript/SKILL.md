@@ -1,78 +1,61 @@
 ---
 name: video-to-transcript
-description: 当用户要求下载或转写课程视频、将视频或音频整理为技术文档、调用百炼 DashScope Paraformer，或安全处理临时转录媒体时使用。
+description: Use when downloading or transcribing a video, podcast, course, or audio source; turning spoken content into a publishable Markdown blog or review article; calling DashScope Paraformer; or safely handling temporary transcription media.
 ---
 
-# 视频转录与技术文档整理
+# 视频转录与博客重构
 
-使用随附的 CLI 执行确定性的媒体处理和安全清理。安装依赖、配置凭据、修改百炼端点或模型，以及诊断故障时，完整阅读 [references/configuration.md](references/configuration.md)。
+使用随附 CLI 完成确定性的媒体处理，再把口语化转录重构为可公开发布、便于复习的 Markdown 博客。安装依赖、配置凭据或诊断转录故障时，完整阅读 [references/configuration.md](references/configuration.md)。
 
 ## 前置条件
 
-1. 确认用户有权下载和处理输入来源，并遵守来源站点的条款。
-2. 接受 `PATH` 中的 `yt-dlp`，或当前 Python 环境中的 `yt_dlp` 模块。仅在所选媒体确实需要时，才把 `ffmpeg` 和 `ffprobe` 作为可执行依赖。除非用户明确要求从源码构建，否则不要克隆或编译它们的 GitHub 仓库。
-3. 必须提供 `DASHSCOPE_API_KEY`，且不得打印或持久化该密钥。
-4. 除非用户提供 `DASHSCOPE_MODEL`，否则使用内置默认模型 `paraformer-v2`。
+1. 确认用户有权下载和处理输入来源，并遵守来源站点条款。
+2. 接受 `PATH` 中的 `yt-dlp` 或当前 Python 环境中的 `yt_dlp`；只在媒体确实需要时要求 `ffmpeg` 和 `ffprobe`。
+3. 要求 `DASHSCOPE_API_KEY`，且不得打印或持久化密钥。默认模型为 `paraformer-v2`，除非用户设置 `DASHSCOPE_MODEL`。
 
-## 执行转录
+## 在私有暂存目录中转录
 
-在本 Skill 目录中运行：
+在用户指定的最终输出目录内创建一个仅属于本次运行的 `.video-to-blog-stage-<随机值>` 目录，解析并确认它位于该输出目录内，然后运行：
 
 ```bash
-python scripts/video_to_transcript.py "<URL-or-local-path>" --output-dir "<output-directory>"
+python scripts/video_to_transcript.py "<URL-or-local-path>" --output-dir "<private-stage-directory>"
 ```
 
-默认处理方式：
+URL 使用 `bestaudio/worst` 下载单个条目；本地视频只检查和提取音频，原始本地媒体永不删除。除非用户明确要求，不使用 `--keep-media`；只有需要紧凑的 16 kHz 单声道 MP3 时才使用 `--normalize-audio`。
 
-- URL：使用 `bestaudio/worst` 下载单个条目，然后检查媒体。优先选择最佳纯音频格式；没有纯音频格式时，回退到最低清晰度的合并格式，不分别下载视频流和音频流再合并。
-- 本地视频：原地检查源文件，把音频提取到私有工作目录，永不删除原始视频。
-- 本地音频或下载得到的纯音频：直接上传；仅在需要紧凑的 16 kHz 单声道 MP3 时添加 `--normalize-audio`。
-- 视频音轨：提取为 64 kbit/s、16 kHz 的单声道 MP3，并保留停顿和授课节奏。
+从规范化 JSON 读取不含时间戳的 `text` 和 `metadata.duration_seconds`。标题来源优先级为：用户提供的名称与集数、可用媒体元数据、本地文件名、清理后的来源名；不得虚构标题或集数。
 
-如果用户希望任务成功后仍保留下载或提取的媒体，使用 `--keep-media`。
+## 重构博客
 
-## 整理并发布技术文档
+完整阅读 [references/blog-reconstruction-workflow.md](references/blog-reconstruction-workflow.md)，默认使用其中的 `economy` 模式：
 
-CLI 成功后：
+1. 按时长与 Token 预算的较大分片数切分。
+2. 每片单次通读，同时生成一句话知识锚点和最小证据胶囊。
+3. 只合并压缩材料；仅对标记节点定向回查原文，不做第二次全文读取。
+4. 以锚点编号检查覆盖后移除编号，完成博客文风与 Markdown 检查。
+5. 先写同目录临时文件，通过门禁后原子发布为 `*.blog.md`。
 
-1. 完整阅读 `references/technical-document-workflow.md`。
-2. 从规范化 JSON 中读取 `text` 和 `metadata`。
-3. 短文本直接整理；长文本使用参考文档规定的分块和事实卡工作流。
-4. 可以访问网络时，使用官方一手资料核对可能变化的技术信息。
-5. 起草、自检并发布不覆盖已有文件的 `*.technical.md`。
-6. 保持三种转录产物不变。
+用户明确要求最高保真，或内容属于高风险且细节无法由定向回查确认时，才使用 `maximum-fidelity` 模式。
 
-如果转录失败，按照既有删除门禁保留本次运行创建的媒体。如果转录成功但文档整理失败，报告部分成功并保留全部转录产物。整理文档时不得删除或覆盖任何转录产物，同时保留文档草稿以便重试。
+## 发布与清理门禁
 
-## 返回结果
+最终文章首行必须是 `# 《名称》`；系列内容使用 `# 《名称 第X集/期》`。已有同名文件时依次选择 `-2`、`-3`，不得覆盖。
 
-成功后按以下顺序返回路径：
+只有同时满足以下条件，才算发布成功：
 
-- `*.technical.md`：已发布且不含时间戳的技术文档；
-- `*.transcript.md`：不含时间戳的可读转录文本；
-- `*.transcript.json`：规范化的 `text`，以及包含模型、任务 ID、来源和时长的 `metadata`；
-- `*.asr.raw.json`：未经修改的服务商响应，用于审计或后续重新处理。
+- 最终文件非空，首行标题合规；
+- 所有知识锚点恰好完成覆盖，内部编号、时间戳、日志和处理说明均已移除；
+- 最终文件位于用户指定的输出目录，暂存目录仍解析在该目录内；
+- 待清理文件均由本次运行创建且位于本次私有暂存目录内。
 
-如果技术文档已经存在，依次使用 `-2`、`-3` 等可用后缀发布，不得覆盖已有文件。
+成功发布后，删除本次暂存目录中的转录 Markdown、规范化 JSON、ASR 原始响应、草稿及其他中间产物，再删除空暂存目录。不得用通配符、未解析变量或宽泛路径执行清理。最终 `*.blog.md` 是唯一交付物，回复中直接给出文章正文，不附开场白、路径清单、执行过程或质检报告。
 
-必要时向用户说明清理范围：CLI 只删除本次运行创建的本地媒体。百炼临时 OSS 上传对象由服务商按照临时存储生命周期管理；CLI 不会获得该对象的删除凭据。
-
-## 执行删除门禁
-
-永不删除本地输入文件，也不在通用清理逻辑或 `finally` 块中删除媒体。
-
-只有在三种输出文件均存在、规范化 JSON 包含非空白文本，并且每个待删除目标同时满足以下条件时，才允许清理：
-
-- 由本次运行创建；
-- 解析后的路径位于本次运行的私有工作目录内。
-
-脚本会强制执行这些检查。预检失败发生在工作目录创建之前。开始创建媒体后，如果下载、转换、上传、服务商调用、解析、持久化或验证失败，则保留本次运行创建的媒体，并返回私有工作目录，供重试或排错。
+如果转录、重构、验证或发布失败，不执行成功清理；保留私有暂存目录供重试，并简洁报告失败阶段和目录。失败恢复材料不属于成功交付物。
 
 ## 禁止事项
 
-- 不要分别请求视频和音频格式；转录以音频为先，不需要合并步骤。
-- 不要使用 `worstaudio`；ASR 准确率依赖音频质量。
-- 不要添加 `--yes-playlist`；每次调用只处理一个条目。
-- 不要请求时间戳对齐，也不要向规范化输出添加时间戳。
-- 默认不要删除停顿或静音，它们会影响授课节奏。
-- 除非确实使用凭据和真实来源执行过云端转录，否则不得声称已经验证实时云转录。
+- 不分别请求视频流和音频流，不使用 `worstaudio`，不处理播放列表。
+- 不向最终文章加入时间戳、知识清单、锚点编号或处理日志。
+- 不为补齐文章虚构观点、经历、数据、代码、案例或引用。
+- 不把博客写成任务汇报、会议总结、公文纪要或逐句转录。
+- 未使用真实来源和凭据完成云端调用时，不声称已经验证实时转录。
