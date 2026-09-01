@@ -1,0 +1,33 @@
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+
+# Local environments and secrets
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# Generated transcription outputs and temporary media
+transcripts/
+.video-to-transcript-work-*/
+*.mp3
+*.m4a
+*.wav
+*.aac
+*.flac
+*.mp4
+*.mkv
+*.webm
+*.asr.raw.json
+*.transcript.json
+*.transcript.md
+*.technical.md
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
