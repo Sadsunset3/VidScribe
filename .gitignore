@@ -31,3 +31,6 @@ transcripts/
 .vscode/
 .DS_Store
 Thumbs.db
+/openspec/
+/.claude/
+/.claude/
